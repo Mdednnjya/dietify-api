@@ -28,6 +28,7 @@ class UserPreferences:
                 # Daging & Unggas
                 "chicken", "beef", "pork", "daging", "lamb", "kambing", "ayam", "sapi",
                 "tulang ayam", "nugget", "geprek", "rica", "betutu", "katsu",
+                "tulang ayam rica wangi", "ayam geprek", "ayam woku manado"
 
                 # Seafood (ikan & udang)
                 "ikan", "fish", "udang", "shrimp", "patin", "gurame", "teri", "tuna",
@@ -44,7 +45,8 @@ class UserPreferences:
                 "tulang ayam", "nugget", "geprek", "rica", "betutu", "katsu",
                 "ikan", "fish", "udang", "shrimp", "patin", "gurame", "teri", "tuna",
                 "bandeng", "tenggiri", "siomay", "kornet", "abon", "sate", "rawon",
-                "tongseng", "bulgogi",
+                "tongseng", "bulgogi", "tulang ayam rica wangi", "ayam geprek",
+                "ayam woku manado"
 
                 # Dairy & Eggs
                 "egg", "telur", "telor", "dadar", "milk", "susu", "cheese", "keju",
@@ -56,7 +58,8 @@ class UserPreferences:
                 # Only land animals (keep seafood)
                 "chicken", "beef", "pork", "daging", "lamb", "kambing", "ayam", "sapi",
                 "tulang ayam", "nugget", "geprek", "rica", "betutu", "katsu",
-                "kornet", "abon", "sate", "rawon", "tongseng", "bulgogi"
+                "kornet", "abon", "sate", "rawon", "tongseng", "bulgogi",
+                "tulang ayam rica wangi", "ayam geprek", "ayam woku manado"
                 # NO ikan/udang - pescatarian can eat seafood
             ]
         }
