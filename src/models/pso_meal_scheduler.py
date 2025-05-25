@@ -421,30 +421,95 @@ class ParticleSwarmOptimizer:
             return gbest, nutrition, gbest_score
 
     def filter_recipes_by_calorie_target(self):
-        """Filter recipe pool based on calorie target"""
+        """
+        Filter recipe pool based on calorie target with improved logic for weight gain
+        """
         target_calories = self.target_metrics['calories']
 
-        if target_calories < 2000:
-            low_cal_mask = self.meal_data['nutrition'].apply(lambda x: x.get('calories', 0) < 250)
-            filtered_data = self.meal_data[low_cal_mask]
+        # Calculate target calories per recipe based on meals configuration
+        total_recipes_per_day = self.meals_per_day * self.recipes_per_meal
+        target_per_recipe = target_calories / total_recipes_per_day
 
-            if len(filtered_data) < 10:
-                fallback_mask = self.meal_data['nutrition'].apply(lambda x: x.get('calories', 0) < 300)
-                filtered_data = self.meal_data[fallback_mask]
+        print(f"Target calories: {target_calories:.0f} kcal")
+        print(f"Meals per day: {self.meals_per_day}, Recipes per meal: {self.recipes_per_meal}")
+        print(f"Total recipes per day: {total_recipes_per_day}")
+        print(f"Target per recipe: {target_per_recipe:.0f} kcal")
 
-        elif target_calories > 3200:
-            filtered_data = self.meal_data
+        if target_calories < 1800:
+            min_cal = 50
+            max_cal = int(target_per_recipe * 1.5)
+            category = "Low Calorie"
+
+        elif target_calories < 2400:
+            min_cal = 100
+            max_cal = int(target_per_recipe * 1.8)
+            category = "Medium Calorie"
+
+        elif target_calories < 3000:
+            min_cal = 150
+            max_cal = int(target_per_recipe * 2.2)
+            category = "High Calorie"
 
         else:
-            med_cal_mask = self.meal_data['nutrition'].apply(
-                lambda x: 150 <= x.get('calories', 0) <= 400
-            )
-            filtered_data = self.meal_data[med_cal_mask]
+            min_cal = 200
+            max_cal = int(target_per_recipe * 2.5)  # Maximum flexibility
+            category = "Very High Calorie"
 
+        print(f"Category: {category}")
+        print(f"Recipe calorie range: {min_cal}-{max_cal} kcal")
+
+        # Apply filtering
+        calorie_mask = self.meal_data['nutrition'].apply(
+            lambda x: min_cal <= x.get('calories', 0) <= max_cal
+        )
+        filtered_data = self.meal_data[calorie_mask]
+
+        # Fallback if too few recipes (less than 20)
+        if len(filtered_data) < 20:
+            print(f"Only {len(filtered_data)} recipes found, applying fallback...")
+
+            # Fallback: Expand range by 50% on both sides
+            fallback_min = max(50, int(min_cal * 0.5))
+            fallback_max = int(max_cal * 1.5)
+
+            fallback_mask = self.meal_data['nutrition'].apply(
+                lambda x: fallback_min <= x.get('calories', 0) <= fallback_max
+            )
+            filtered_data = self.meal_data[fallback_mask]
+
+            print(f"Fallback range: {fallback_min}-{fallback_max} kcal")
+            print(f"Fallback recipes found: {len(filtered_data)}")
+
+            # Ultimate fallback: use top 50% calorie recipes if still too few
+            if len(filtered_data) < 15:
+                print("Still too few recipes, using top 50% by calories...")
+                calories_series = self.meal_data['nutrition'].apply(lambda x: x.get('calories', 0))
+                median_calories = calories_series.median()
+
+                high_cal_mask = self.meal_data['nutrition'].apply(
+                    lambda x: x.get('calories', 0) >= median_calories
+                )
+                filtered_data = self.meal_data[high_cal_mask]
+                print(f"Using recipes >= {median_calories:.0f} kcal: {len(filtered_data)} recipes")
+
+        # Show sample of selected recipes
+        print(f"\nFinal filtered recipes: {len(filtered_data)}")
+        if len(filtered_data) > 0:
+            sample_calories = filtered_data['nutrition'].apply(lambda x: x.get('calories', 0))
+            print(f"Calorie range in selected recipes: {sample_calories.min():.0f}-{sample_calories.max():.0f} kcal")
+            print(f"Average calories per recipe: {sample_calories.mean():.0f} kcal")
+
+            # Show sample recipes
+            print("\nSample recipes:")
+            for _, row in filtered_data.head(5).iterrows():
+                calories = row['nutrition'].get('calories', 0)
+                print(f"  - ID {row['ID']}: {row['Title']} ({calories:.0f} kcal)")
+
+        # Update filtered data
         self.filtered_meal_data = filtered_data
         self.meal_ids = filtered_data['ID'].unique().tolist()
 
-        print(f"Filtered to {len(filtered_data)} recipes for target {target_calories} kcal")
+        return len(filtered_data)
 
     def generate_meal_plan(self):
         """Generate an optimized meal plan"""
