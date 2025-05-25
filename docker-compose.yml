@@ -1,31 +1,6 @@
 version: '3.8'
 
 services:
-  api:
-    build: .
-    ports:
-      - "8000:8000"
-    environment:
-      - REDIS_URL=redis://redis:6379
-      - MLFLOW_TRACKING_URI=http://mlflow:5000
-    depends_on:
-      redis:
-        condition: service_started
-      mlflow:
-        condition: service_started
-    volumes:
-      - ./models:/app/models
-      - ./output:/app/output
-      - ./data:/app/data
-    restart: unless-stopped
-    networks:
-      - dietify-network
-    healthcheck:
-      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/api/v1/health')"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
   redis:
     image: redis:alpine
     ports:
@@ -35,17 +10,20 @@ services:
       - dietify-network
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 30s
+      interval: 15s
       timeout: 5s
       retries: 3
+      start_period: 10s
 
   mlflow:
-    build: ./mlflow
+    build:
+      context: ./mlflow
+      dockerfile: Dockerfile
     ports:
       - "5000:5000"
     volumes:
-      - ./mlruns:/mlruns
-      - ./mlartifacts:/mlartifacts
+      - mlruns:/mlruns
+      - mlartifacts:/mlartifacts
     restart: unless-stopped
     networks:
       - dietify-network
@@ -53,11 +31,39 @@ services:
       - MLFLOW_BACKEND_STORE_URI=file:///mlruns
       - MLFLOW_DEFAULT_ARTIFACT_ROOT=file:///mlartifacts
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:5000"]
+      interval: 30s
+      timeout: 15s
+      retries: 5
+      start_period: 60s
+
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+    depends_on:
+      redis:
+        condition: service_healthy
+      mlflow:
+        condition: service_healthy
+    volumes:
+      - ./models:/app/models
+      - ./output:/app/output
+      - ./data:/app/data
+      - mlruns:/app/mlruns
+      - mlartifacts:/app/mlartifacts
+    restart: unless-stopped
+    networks:
+      - dietify-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
       interval: 30s
       timeout: 10s
-      retries: 5
-      start_period: 40s
+      retries: 3
+      start_period: 30s
 
 networks:
   dietify-network:
@@ -65,4 +71,6 @@ networks:
 
 volumes:
   mlruns:
+    driver: local
   mlartifacts:
+    driver: local
