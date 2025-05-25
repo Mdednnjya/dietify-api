@@ -119,6 +119,8 @@ class ParticleSwarmOptimizer:
             # Set the user preferences for filtering recipes
             self.user_preferences = user_preferences
 
+            self.goal = goal
+
             # Filter meals based on user preferences if provided
             if self.user_preferences:
                 self.filtered_meal_data = self.user_preferences.filter_recipes(self.meal_data)
@@ -422,41 +424,50 @@ class ParticleSwarmOptimizer:
 
     def filter_recipes_by_calorie_target(self):
         """
-        Filter recipe pool based on calorie target with improved logic for weight gain
+        Expo-ready calorie filtering with goal-based adjustments
         """
         target_calories = self.target_metrics['calories']
+        goal = getattr(self, 'goal', 'maintain')  # Get goal from user preferences
 
-        # Calculate target calories per recipe based on meals configuration
         total_recipes_per_day = self.meals_per_day * self.recipes_per_meal
-        target_per_recipe = target_calories / total_recipes_per_day
+        base_target_per_recipe = target_calories / total_recipes_per_day
 
-        print(f"Target calories: {target_calories:.0f} kcal")
-        print(f"Meals per day: {self.meals_per_day}, Recipes per meal: {self.recipes_per_meal}")
-        print(f"Total recipes per day: {total_recipes_per_day}")
-        print(f"Target per recipe: {target_per_recipe:.0f} kcal")
+        if goal == 'lose':
+            adjustment_factor = 0.85
+            max_multiplier = 1.4
+        elif goal == 'gain':
+            adjustment_factor = 1.0
+            max_multiplier = 2.0
+        else:
+            adjustment_factor = 0.95
+            max_multiplier = 1.6
 
-        if target_calories < 1800:
-            min_cal = 50
-            max_cal = int(target_per_recipe * 1.5)
+        target_per_recipe = base_target_per_recipe * adjustment_factor
+
+        print(f"Goal: {goal}, Target calories: {target_calories:.0f} kcal")
+        print(f"Adjustment factor: {adjustment_factor}, Target per recipe: {target_per_recipe:.0f} kcal")
+
+        if target_calories < 1800:  # Low calorie targets
+            min_cal = max(50, int(target_per_recipe * 0.6))
+            max_cal = int(target_per_recipe * max_multiplier)
             category = "Low Calorie"
 
-        elif target_calories < 2400:
-            min_cal = 100
-            max_cal = int(target_per_recipe * 1.8)
+        elif target_calories < 2400:  # Medium calorie targets
+            min_cal = max(80, int(target_per_recipe * 0.7))
+            max_cal = int(target_per_recipe * max_multiplier)
             category = "Medium Calorie"
 
-        elif target_calories < 3000:
-            min_cal = 150
-            max_cal = int(target_per_recipe * 2.2)
+        elif target_calories < 3000:  # High calorie targets
+            min_cal = max(120, int(target_per_recipe * 0.8))
+            max_cal = int(target_per_recipe * max_multiplier)
             category = "High Calorie"
 
-        else:
-            min_cal = 200
-            max_cal = int(target_per_recipe * 2.5)  # Maximum flexibility
+        else:  # Very high calorie targets
+            min_cal = max(150, int(target_per_recipe * 0.9))
+            max_cal = int(target_per_recipe * max_multiplier)
             category = "Very High Calorie"
 
-        print(f"Category: {category}")
-        print(f"Recipe calorie range: {min_cal}-{max_cal} kcal")
+        print(f"Category: {category}, Range: {min_cal}-{max_cal} kcal")
 
         # Apply filtering
         calorie_mask = self.meal_data['nutrition'].apply(
@@ -464,48 +475,60 @@ class ParticleSwarmOptimizer:
         )
         filtered_data = self.meal_data[calorie_mask]
 
-        # Fallback if too few recipes (less than 20)
-        if len(filtered_data) < 20:
-            print(f"Only {len(filtered_data)} recipes found, applying fallback...")
+        # SMART FALLBACK (Improved)
+        if len(filtered_data) < 15:
+            print(f"Only {len(filtered_data)} recipes, applying smart fallback...")
 
-            # Fallback: Expand range by 50% on both sides
-            fallback_min = max(50, int(min_cal * 0.5))
-            fallback_max = int(max_cal * 1.5)
+            if goal == 'lose':
+                # For weight loss: expand downward more than upward
+                fallback_min = max(30, int(min_cal * 0.5))
+                fallback_max = int(max_cal * 1.2)
+            elif goal == 'gain':
+                # For weight gain: expand upward more than downward
+                fallback_min = max(50, int(min_cal * 0.7))
+                fallback_max = int(max_cal * 1.5)
+            else:  # maintain
+                # For maintenance: balanced expansion
+                fallback_min = max(50, int(min_cal * 0.6))
+                fallback_max = int(max_cal * 1.3)
 
             fallback_mask = self.meal_data['nutrition'].apply(
                 lambda x: fallback_min <= x.get('calories', 0) <= fallback_max
             )
             filtered_data = self.meal_data[fallback_mask]
+            print(f"Fallback range: {fallback_min}-{fallback_max} kcal, Found: {len(filtered_data)}")
 
-            print(f"Fallback range: {fallback_min}-{fallback_max} kcal")
-            print(f"Fallback recipes found: {len(filtered_data)}")
+        # Ultimate fallback: goal-aware recipe selection
+        if len(filtered_data) < 10:
+            print("Using goal-aware ultimate fallback...")
+            calories_series = self.meal_data['nutrition'].apply(lambda x: x.get('calories', 0))
 
-            # Ultimate fallback: use top 50% calorie recipes if still too few
-            if len(filtered_data) < 15:
-                print("Still too few recipes, using top 50% by calories...")
-                calories_series = self.meal_data['nutrition'].apply(lambda x: x.get('calories', 0))
-                median_calories = calories_series.median()
-
-                high_cal_mask = self.meal_data['nutrition'].apply(
-                    lambda x: x.get('calories', 0) >= median_calories
+            if goal == 'lose':
+                # Use bottom 60% for weight loss
+                threshold = calories_series.quantile(0.6)
+                mask = self.meal_data['nutrition'].apply(lambda x: x.get('calories', 0) <= threshold)
+            elif goal == 'gain':
+                # Use top 60% for weight gain
+                threshold = calories_series.quantile(0.4)
+                mask = self.meal_data['nutrition'].apply(lambda x: x.get('calories', 0) >= threshold)
+            else:
+                # Use middle 80% for maintenance
+                low_threshold = calories_series.quantile(0.1)
+                high_threshold = calories_series.quantile(0.9)
+                mask = self.meal_data['nutrition'].apply(
+                    lambda x: low_threshold <= x.get('calories', 0) <= high_threshold
                 )
-                filtered_data = self.meal_data[high_cal_mask]
-                print(f"Using recipes >= {median_calories:.0f} kcal: {len(filtered_data)} recipes")
 
-        # Show sample of selected recipes
-        print(f"\nFinal filtered recipes: {len(filtered_data)}")
+            filtered_data = self.meal_data[mask]
+            print(f"Goal-aware fallback: {len(filtered_data)} recipes")
+
+        # Final validation and stats
         if len(filtered_data) > 0:
             sample_calories = filtered_data['nutrition'].apply(lambda x: x.get('calories', 0))
-            print(f"Calorie range in selected recipes: {sample_calories.min():.0f}-{sample_calories.max():.0f} kcal")
-            print(f"Average calories per recipe: {sample_calories.mean():.0f} kcal")
+            print(f"Final recipes: {len(filtered_data)}")
+            print(f"Calorie range: {sample_calories.min():.0f}-{sample_calories.max():.0f} kcal")
+            print(f"Average: {sample_calories.mean():.0f} kcal (target: {target_per_recipe:.0f})")
 
-            # Show sample recipes
-            print("\nSample recipes:")
-            for _, row in filtered_data.head(5).iterrows():
-                calories = row['nutrition'].get('calories', 0)
-                print(f"  - ID {row['ID']}: {row['Title']} ({calories:.0f} kcal)")
-
-        # Update filtered data
         self.filtered_meal_data = filtered_data
         self.meal_ids = filtered_data['ID'].unique().tolist()
 
