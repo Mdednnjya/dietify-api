@@ -15,12 +15,8 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
-    deploy:
-      resources:
-        limits:
-          memory: 512M
-          cpus: '0.5'
 
+  # MLflow dengan stability improvements
   mlflow:
     build:
       context: ./mlflow
@@ -28,28 +24,39 @@ services:
     container_name: dietify-mlflow
     ports:
       - "5000:5000"
-    volumes:
-      - mlruns:/mlruns
-      - mlartifacts:/mlartifacts
     restart: unless-stopped
     networks:
       - dietify-network
     environment:
-      - MLFLOW_BACKEND_STORE_URI=file:///mlruns
-      - MLFLOW_DEFAULT_ARTIFACT_ROOT=file:///mlartifacts
+      - MLFLOW_BACKEND_STORE_URI=sqlite:////app/mlflow.db
+      - MLFLOW_DEFAULT_ARTIFACT_ROOT=file:///app/mlartifacts
       - MLFLOW_HOST=0.0.0.0
       - MLFLOW_PORT=5000
+      # Timeout settings untuk long-running PSO
+      - GUNICORN_TIMEOUT=300
+      - GUNICORN_WORKERS=2
+      - GUNICORN_WORKER_CLASS=sync
+      - GUNICORN_WORKER_CONNECTIONS=1000
+      - GUNICORN_MAX_REQUESTS=1000
+      - GUNICORN_MAX_REQUESTS_JITTER=100
+    volumes:
+      - mlflow_data:/app
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5000/api/2.0/mlflow/experiments/list"]
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
       interval: 30s
-      timeout: 10s
+      timeout: 15s
       retries: 5
-      start_period: 60s
-    deploy:
-      resources:
-        limits:
-          memory: 2G
-          cpus: '1.0'
+      start_period: 120s  # Longer start period
+    # Custom command dengan proper timeout dan worker settings
+    command: [
+      "python", "-m", "mlflow", "server",
+      "--backend-store-uri", "sqlite:////app/mlflow.db",
+      "--default-artifact-root", "file:///app/mlartifacts",
+      "--host", "0.0.0.0",
+      "--port", "5000",
+      "--serve-artifacts",
+      "--gunicorn-opts", "--timeout=300 --workers=2 --worker-class=sync --worker-connections=1000 --max-requests=1000 --max-requests-jitter=100"
+    ]
 
   api:
     build:
@@ -61,19 +68,21 @@ services:
     environment:
       - REDIS_URL=redis://redis:6379
       - MLFLOW_TRACKING_URI=http://mlflow:5000
+      - MLFLOW_ENABLED=true
       - PYTHONPATH=/app
       - PYTHONUNBUFFERED=1
+      # Timeout settings untuk PSO optimization
+      - PSO_TIMEOUT=60
+      - API_TIMEOUT=120
     depends_on:
       redis:
         condition: service_healthy
       mlflow:
-        condition: service_healthy
+        condition: service_started  # Changed from service_healthy to avoid blocking
     volumes:
       - ./models:/app/models:ro
       - ./output:/app/output
       - ./data:/app/data:ro
-      - mlruns:/app/mlruns
-      - mlartifacts:/app/mlartifacts
     restart: unless-stopped
     networks:
       - dietify-network
@@ -82,12 +91,9 @@ services:
       interval: 30s
       timeout: 15s
       retries: 5
-      start_period: 90s
-    deploy:
-      resources:
-        limits:
-          memory: 4G
-          cpus: '2.0'
+      start_period: 60s
+    # Custom command dengan timeout yang lebih besar
+    command: ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000", "--timeout-keep-alive", "120", "--timeout-graceful-shutdown", "60"]
 
 networks:
   dietify-network:
@@ -95,9 +101,5 @@ networks:
     name: dietify-network
 
 volumes:
-  mlruns:
+  mlflow_data:
     driver: local
-    name: dietify-mlruns
-  mlartifacts:
-    driver: local
-    name: dietify-mlartifacts
