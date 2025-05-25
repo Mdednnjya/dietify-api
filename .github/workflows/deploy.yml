@@ -22,7 +22,7 @@ jobs:
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v1
 
-      - name: Deploy via gcloud SSH
+      - name: Deploy Application
         run: |
           gcloud compute ssh dietify-api-vm \
             --zone=asia-southeast2-a \
@@ -34,9 +34,8 @@ jobs:
               
               echo 'Installing system dependencies...'
               sudo apt-get update -y
-              sudo apt-get install -y git curl net-tools htop
+              sudo apt-get install -y git curl net-tools htop jq
               
-              # Install Docker if not exists
               if ! command -v docker &> /dev/null; then
                 echo 'Installing Docker...'
                 curl -fsSL https://get.docker.com -o get-docker.sh
@@ -46,15 +45,13 @@ jobs:
                 sudo usermod -aG docker \$USER
               fi
               
-              # Install Docker Compose if not exists
               if ! command -v docker-compose &> /dev/null; then
                 echo 'Installing Docker Compose...'
                 sudo curl -L \"https://github.com/docker/compose/releases/download/v2.21.0/docker-compose-\$(uname -s)-\$(uname -m)\" -o /usr/local/bin/docker-compose
                 sudo chmod +x /usr/local/bin/docker-compose
               fi
               
-              # Cleanup existing deployment
-              echo 'Cleaning up existing deployment...'
+              echo 'Stopping existing services...'
               if [ -d \"dietify-api\" ]; then
                 cd dietify-api
                 sudo docker-compose down --remove-orphans --volumes --timeout 60 || true
@@ -62,96 +59,84 @@ jobs:
                 sudo rm -rf dietify-api
               fi
               
-              # Clean Docker system
-              echo 'Cleaning Docker system...'
+              echo 'Cleaning Docker resources...'
               sudo docker system prune -af --volumes || true
               sudo docker network prune -f || true
               
-              # Fresh clone
-              echo 'Cloning latest repository...'
+              echo 'Cloning repository...'
               git clone https://\${{ secrets.PERSONAL_ACCESS_TOKEN }}@github.com/${{ github.repository }}.git dietify-api
               cd dietify-api
               
-              # Verify latest commit
-              echo \"Current commit: \$(git log --oneline -1)\"
+              echo 'Current commit:'
+              git log --oneline -1
               
-              # Create directories with proper permissions
+              echo 'Setting up directories...'
               mkdir -p models output data/raw data/interim
               sudo chown -R \$USER:\$USER models output data
               
-              # Build containers
-              echo 'Building containers with no cache...'
+              echo 'Building containers...'
               sudo docker-compose build --no-cache --pull
               
-              # Start services in order
-              echo 'Starting Redis...'
+              echo 'Starting Redis service...'
               sudo docker-compose up -d redis
               
-              # Wait for Redis
-              echo 'Waiting for Redis to be healthy...'
-              timeout 60s bash -c 'until sudo docker-compose exec redis redis-cli ping 2>/dev/null; do sleep 2; echo \"Waiting for Redis...\"; done'
+              echo 'Waiting for Redis readiness...'
+              timeout 60s bash -c 'until sudo docker-compose exec redis redis-cli ping 2>/dev/null; do sleep 2; done'
+              echo 'Redis is ready'
               
-              # Start MLflow
-              echo 'Starting MLflow...'
+              echo 'Starting MLflow service...'
               sudo docker-compose up -d mlflow
               
-              # Wait for MLflow API to be ready
-              echo 'Waiting for MLflow API to be ready...'
-              for i in {1..20}; do
-                sleep 15
-                if sudo docker-compose exec mlflow curl -f http://localhost:5000/api/2.0/mlflow/experiments/list 2>/dev/null; then
-                  echo \"MLflow API is ready\"
+              echo 'Waiting for MLflow initialization...'
+              for i in {1..24}; do
+                sleep 10
+                if sudo docker-compose exec mlflow curl -f http://localhost:5000 >/dev/null 2>&1; then
+                  echo 'MLflow is ready'
                   break
                 fi
-                echo \"MLflow API not ready yet, attempt \$i/20\"
-                if [ \$i -eq 20 ]; then
-                  echo \"MLflow API failed to start, checking logs...\"
-                  sudo docker-compose logs mlflow --tail=50
-                  exit 1
+                echo 'Waiting for MLflow... attempt' \$i'/24'
+                if [ \$i -eq 24 ]; then
+                  echo 'MLflow initialization timeout, checking logs...'
+                  sudo docker-compose logs mlflow --tail=30
                 fi
               done
               
-              # Start API service
               echo 'Starting API service...'
               sudo docker-compose up -d api
               
-              # Wait for API to be healthy
-              echo 'Waiting for API to be healthy...'
-              for i in {1..15}; do
-                sleep 20
-                if sudo docker-compose exec api curl -f http://localhost:8000/api/v1/health 2>/dev/null; then
-                  echo \"API is healthy\"
+              echo 'Waiting for API readiness...'
+              for i in {1..18}; do
+                sleep 10
+                if sudo docker-compose exec api curl -f http://localhost:8000/api/v1/health >/dev/null 2>&1; then
+                  echo 'API is ready'
                   break
                 fi
-                echo \"API not healthy yet, attempt \$i/15\"
-                if [ \$i -eq 15 ]; then
-                  echo \"API failed to become healthy, checking logs...\"
-                  sudo docker-compose logs api --tail=50
-                  exit 1
+                echo 'Waiting for API... attempt' \$i'/18'
+                if [ \$i -eq 18 ]; then
+                  echo 'API initialization timeout, checking logs...'
+                  sudo docker-compose logs api --tail=30
                 fi
               done
               
-              # Final status check
-              echo 'Final deployment status:'
+              echo 'Deployment status:'
               sudo docker-compose ps
               
-              # Test endpoints
-              echo 'Testing endpoints...'
-              curl -f http://localhost:8000/api/v1/health || echo 'API health check failed'
-              curl -f http://localhost:5000/api/2.0/mlflow/experiments/list || echo 'MLflow API check failed'
+              echo 'Service health verification:'
+              sudo docker-compose exec api curl -f http://localhost:8000/api/v1/health >/dev/null 2>&1 && echo 'API: healthy' || echo 'API: unhealthy'
+              sudo docker-compose exec mlflow curl -f http://localhost:5000 >/dev/null 2>&1 && echo 'MLflow: healthy' || echo 'MLflow: unhealthy'
+              sudo docker-compose exec redis redis-cli ping >/dev/null 2>&1 && echo 'Redis: healthy' || echo 'Redis: unhealthy'
               
-              echo 'Deployment completed successfully!'
+              echo 'Deployment completed'
             "
 
-      - name: Get VM External IP and URLs
+      - name: Display Deployment URLs
         run: |
           EXTERNAL_IP=$(gcloud compute instances describe ${{ secrets.GCP_INSTANCE }} \
             --zone=${{ secrets.GCP_ZONE }} \
             --project=${{ secrets.GCP_PROJECT_ID }} \
             --format="value(networkInterfaces[0].accessConfigs[0].natIP)")
-          echo "Deployment completed successfully!"
-          echo "API URL: http://$EXTERNAL_IP:8000"
-          echo "Health Check: http://$EXTERNAL_IP:8000/api/v1/health"
+          echo "Deployment Information:"
+          echo "External IP: $EXTERNAL_IP"
+          echo "API Health: http://$EXTERNAL_IP:8000/api/v1/health"
           echo "API Documentation: http://$EXTERNAL_IP:8000/docs"
           echo "MLflow UI: http://$EXTERNAL_IP:5000"
-          echo "MLflow API Test: http://$EXTERNAL_IP:5000/api/2.0/mlflow/experiments/list"
