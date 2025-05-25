@@ -9,7 +9,6 @@ RUN apt-get update && apt-get install -y \
     g++ \
     && rm -rf /var/lib/apt/lists/*
 
-# IMPORTANT: Install setuptools first to fix pkg_resources issue
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 
 # Install MLflow and dependencies
