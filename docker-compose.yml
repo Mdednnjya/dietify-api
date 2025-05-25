@@ -9,19 +9,35 @@ services:
       - REDIS_URL=redis://redis:6379
       - MLFLOW_TRACKING_URI=http://mlflow:5000
     depends_on:
-      - redis
-      - mlflow
+      redis:
+        condition: service_started
+      mlflow:
+        condition: service_started
     volumes:
       - ./models:/app/models
       - ./output:/app/output
       - ./data:/app/data
     restart: unless-stopped
+    networks:
+      - dietify-network
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/api/v1/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   redis:
     image: redis:alpine
     ports:
       - "6379:6379"
     restart: unless-stopped
+    networks:
+      - dietify-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
   mlflow:
     build: ./mlflow
@@ -31,3 +47,22 @@ services:
       - ./mlruns:/mlruns
       - ./mlartifacts:/mlartifacts
     restart: unless-stopped
+    networks:
+      - dietify-network
+    environment:
+      - MLFLOW_BACKEND_STORE_URI=file:///mlruns
+      - MLFLOW_DEFAULT_ARTIFACT_ROOT=file:///mlartifacts
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+
+networks:
+  dietify-network:
+    driver: bridge
+
+volumes:
+  mlruns:
+  mlartifacts:

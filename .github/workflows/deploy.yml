@@ -1,0 +1,91 @@
+name: Deploy to GCP VM
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Deploy to GCP VM
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v1
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v1
+
+      - name: Deploy via gcloud SSH
+        run: |
+          gcloud compute ssh dietify-api-vm \
+            --zone=asia-southeast2-a \
+            --project=${{ secrets.GCP_PROJECT_ID }} \
+            --ssh-flag="-o ConnectTimeout=30" \
+            --ssh-flag="-o StrictHostKeyChecking=no" \
+            --command="
+              # Install dependencies
+              sudo apt-get update -y
+              sudo apt-get install -y git curl net-tools
+              
+              # Install Docker if not exists
+              if ! command -v docker &> /dev/null; then
+                curl -fsSL https://get.docker.com -o get-docker.sh
+                sh get-docker.sh
+                sudo systemctl enable docker
+                sudo systemctl start docker
+              fi
+              
+              # Install Docker Compose if not exists
+              if ! command -v docker-compose &> /dev/null; then
+                sudo curl -L \"https://github.com/docker/compose/releases/download/v2.21.0/docker-compose-\$(uname -s)-\$(uname -m)\" -o /usr/local/bin/docker-compose
+                sudo chmod +x /usr/local/bin/docker-compose
+              fi
+              
+              # Add user to docker group
+              sudo usermod -aG docker \$USER
+              
+              # Clone/update repository
+              if [ -d \"dietify-api\" ]; then
+                cd dietify-api
+                git fetch origin
+                git reset --hard origin/main
+                git clean -fd
+              else
+                git clone https://github.com/${{ github.repository }}.git dietify-api
+                cd dietify-api
+              fi
+              
+              # Create required directories
+              mkdir -p models output data/raw data/interim mlruns mlartifacts
+              
+              # Stop existing containers
+              sudo docker-compose down --remove-orphans || true
+              
+              # Build and start containers
+              sudo docker-compose build --no-cache
+              sudo docker-compose up -d
+              
+              # Wait for services
+              sleep 60
+              
+              # Show status
+              sudo docker-compose ps
+            "
+
+      - name: Get VM External IP
+        run: |
+          EXTERNAL_IP=$(gcloud compute instances describe ${{ secrets.GCP_INSTANCE }} \
+            --zone=${{ secrets.GCP_ZONE }} \
+            --project=${{ secrets.GCP_PROJECT_ID }} \
+            --format="value(networkInterfaces[0].accessConfigs[0].natIP)")
+          echo "API deployed successfully!"
+          echo "API URL: http://$EXTERNAL_IP:8000"
+          echo "Health Check: http://$EXTERNAL_IP:8000/api/v1/health"
+          echo "API Docs: http://$EXTERNAL_IP:8000/docs"
