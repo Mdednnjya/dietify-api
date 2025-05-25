@@ -54,7 +54,7 @@ jobs:
               echo 'Stopping existing services...'
               if [ -d \"dietify-api\" ]; then
                 cd dietify-api
-                sudo docker-compose down --remove-orphans --volumes --timeout 60 || true
+                sudo docker-compose down --remove-orphans --timeout 60 || true
                 cd ..
                 sudo rm -rf dietify-api
               fi
