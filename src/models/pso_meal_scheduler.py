@@ -433,8 +433,8 @@ class ParticleSwarmOptimizer:
         base_target_per_recipe = target_calories / total_recipes_per_day
 
         if goal == 'lose':
-            adjustment_factor = 0.85
-            max_multiplier = 1.4
+            adjustment_factor = 1.0
+            max_multiplier = 1.8
         elif goal == 'gain':
             adjustment_factor = 1.0
             max_multiplier = 2.0
