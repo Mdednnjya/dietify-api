@@ -1,54 +1,61 @@
 FROM python:3.11-slim
 
-WORKDIR /mlflow
+WORKDIR /app
 
-# Install system dependencies including networking tools
+# Install system dependencies
 RUN apt-get update && apt-get install -y \
     curl \
-    gcc \
-    g++ \
-    iputils-ping \
-    netcat-traditional \
+    sqlite3 \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip install --no-cache-dir --upgrade pip setuptools wheel
-
-# Install MLflow and dependencies with specific versions
-RUN pip install --no-cache-dir \
+# Install MLflow dengan versi yang stabil
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
+    pip install --no-cache-dir \
     mlflow==2.8.1 \
-    boto3 \
-    psycopg2-binary \
-    click \
-    gunicorn==21.2.0
+    gunicorn==21.2.0 \
+    SQLAlchemy \
+    alembic
 
-# Create directories for artifacts and runs
-RUN mkdir -p /mlruns /mlartifacts
+# Create directories dengan proper permissions
+RUN mkdir -p /app/mlruns /app/mlartifacts && \
+    chmod -R 755 /app
 
-# Set proper permissions
-RUN chmod -R 755 /mlruns /mlartifacts
+# Create user untuk security
+RUN useradd -m -u 1000 mlflow && \
+    chown -R mlflow:mlflow /app
 
-# Expose MLflow port
-EXPOSE 5000
+# Create health check endpoint
+RUN echo 'from flask import Flask; app = Flask(__name__); @app.route("/health"); def health(): return "OK"' > /app/health.py
 
-# Set environment variables for MLflow API
-ENV MLFLOW_BACKEND_STORE_URI=file:///mlruns
-ENV MLFLOW_DEFAULT_ARTIFACT_ROOT=file:///mlartifacts
+# Switch to mlflow user
+USER mlflow
+
+# Environment variables untuk timeout dan performance
+ENV MLFLOW_BACKEND_STORE_URI=sqlite:////app/mlflow.db
+ENV MLFLOW_DEFAULT_ARTIFACT_ROOT=file:///app/mlartifacts
 ENV MLFLOW_HOST=0.0.0.0
 ENV MLFLOW_PORT=5000
-ENV PYTHONPATH=/mlflow
 
-# Configure Gunicorn for longer timeouts
+# Gunicorn timeout settings untuk long-running requests
 ENV GUNICORN_TIMEOUT=300
 ENV GUNICORN_WORKERS=2
 ENV GUNICORN_WORKER_CLASS=sync
+ENV GUNICORN_WORKER_CONNECTIONS=1000
 ENV GUNICORN_MAX_REQUESTS=1000
-ENV GUNICORN_MAX_REQUESTS_JITTER=50
+ENV GUNICORN_MAX_REQUESTS_JITTER=100
 
-# Start MLflow server with proper API endpoints
-CMD ["sh", "-c", "mlflow server \
-    --backend-store-uri file:///mlruns \
-    --default-artifact-root file:///mlartifacts \
-    --host 0.0.0.0 \
-    --port 5000 \
-    --serve-artifacts \
-    --gunicorn-opts '--timeout=300 --workers=2 --worker-class=sync --max-requests=1000 --max-requests-jitter=50'"]
+# Expose port
+EXPOSE 5000
+
+# Health check dengan longer timeout
+HEALTHCHECK --interval=30s --timeout=15s --start-period=120s --retries=5 \
+    CMD curl -f http://localhost:5000/health || exit 1
+
+# Default command dengan optimized gunicorn settings
+CMD ["python", "-m", "mlflow", "server", \
+     "--backend-store-uri", "sqlite:////app/mlflow.db", \
+     "--default-artifact-root", "file:///app/mlartifacts", \
+     "--host", "0.0.0.0", \
+     "--port", "5000", \
+     "--serve-artifacts", \
+     "--gunicorn-opts", "--timeout=300 --workers=2 --worker-class=sync --worker-connections=1000 --max-requests=1000 --max-requests-jitter=100 --preload"]
