@@ -18,7 +18,9 @@ app.add_middleware(
     allow_origins=[
         "https://dietify-app.vercel.app",
         "http://localhost:3000",  # Local development
-        "http://127.0.0.1:3000"
+        "http://127.0.0.1:3000",
+        "https://dietify-app.vercel.app/"
+        "https://dietify-app.vercel.app"
     ],
     allow_credentials=True,
     allow_methods=["*"],
